@@ -1,0 +1,78 @@
+# ─────────────────────────────────────────────────────────────
+# Tenant Configuration Registry
+# Each tenant entry defines:
+#   - api_key:       secret used to authenticate inbound requests
+#   - role:          coarse-grained role (admin | editor | viewer)
+#   - allowed_tools: list of tool-name globs the tenant may invoke
+#                    ("*" = unrestricted)
+#   - rate_limit:    max requests per minute
+#   - downstream:    which downstream MCP servers this tenant can reach
+# ─────────────────────────────────────────────────────────────
+
+tenants:
+  # ── Acme Corp (full access) ──────────────────────────────
+  acme:
+    api_key: "sk-acme-XXXXXXXXXXXXXXXXXXXX"
+    role: admin
+    allowed_tools:
+      - "*"
+    rate_limit: 120          # req/min
+    downstream:
+      - filesystem
+      - github
+      - gdrive
+
+  # ── Widgets Inc (read-only on filesystem + GitHub) ───────
+  widgets:
+    api_key: "sk-widgets-XXXXXXXXXXXXXXXXXXXX"
+    role: viewer
+    allowed_tools:
+      - "filesystem:read_file"
+      - "filesystem:list_directory"
+      - "github:get_file_contents"
+      - "github:list_repos"
+    rate_limit: 30
+    downstream:
+      - filesystem
+      - github
+
+  # ── Internal dev team ────────────────────────────────────
+  internal:
+    api_key: "sk-internal-XXXXXXXXXXXXXXXXXXXX"
+    role: editor
+    allowed_tools:
+      - "filesystem:*"
+      - "github:*"
+      - "custom:run_pipeline"
+    rate_limit: 60
+    downstream:
+      - filesystem
+      - github
+      - custom
+
+# ─────────────────────────────────────────────────────────────
+# Downstream MCP Server Definitions
+# Each entry tells the gateway how to connect to a downstream
+# MCP server (stdio or SSE transport).
+# ─────────────────────────────────────────────────────────────
+
+downstream_servers:
+  filesystem:
+    transport: stdio
+    command: "npx"
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "/data"]
+
+  github:
+    transport: stdio
+    command: "npx"
+    args: ["-y", "@modelcontextprotocol/server-github"]
+    env:
+      GITHUB_PERSONAL_ACCESS_TOKEN: "${GITHUB_TOKEN}"
+
+  gdrive:
+    transport: sse
+    url: "http://localhost:3002/sse"
+
+  custom:
+    transport: sse
+    url: "http://localhost:3003/sse"
