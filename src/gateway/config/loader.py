@@ -54,21 +54,33 @@ class GatewayConfig(BaseModel):
 
 
 def _parse_downstream(raw: dict[str, Any]) -> DownstreamServerConfig:
+    from gateway.utils.env import interpolate_env, interpolate_env_dict
+
     if raw.get("transport") == "sse":
+        # Interpolate the URL so it can reference env vars
+        if "url" in raw:
+            raw = {**raw, "url": interpolate_env(raw["url"])}
         return SSETransport(**raw)
 
     # Interpolate ${VAR} references in the env block
-    from gateway.utils.env import interpolate_env_dict
-
     if "env" in raw:
         raw = {**raw, "env": interpolate_env_dict(raw["env"])}
 
     return StdioTransport(**raw)
 
 
+def _parse_tenant(raw: dict[str, Any]) -> TenantConfig:
+    from gateway.utils.env import interpolate_env
+
+    # Allow api_key to reference env vars (e.g. "${ACME_API_KEY}")
+    if "api_key" in raw:
+        raw = {**raw, "api_key": interpolate_env(raw["api_key"])}
+    return TenantConfig(**raw)
+
+
 def load_config(path: str | Path) -> GatewayConfig:
     """Read a YAML config file and return a validated GatewayConfig."""
     raw = yaml.safe_load(Path(path).read_text())
-    tenants = {name: TenantConfig(**t) for name, t in raw["tenants"].items()}
+    tenants = {name: _parse_tenant(t) for name, t in raw["tenants"].items()}
     downstreams = {name: _parse_downstream(d) for name, d in raw["downstream_servers"].items()}
     return GatewayConfig(tenants=tenants, downstream_servers=downstreams)
