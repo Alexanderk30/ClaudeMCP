@@ -56,6 +56,13 @@ class GatewayConfig(BaseModel):
 def _parse_downstream(raw: dict[str, Any]) -> DownstreamServerConfig:
     if raw.get("transport") == "sse":
         return SSETransport(**raw)
+
+    # Interpolate ${VAR} references in the env block
+    from gateway.utils.env import interpolate_env_dict
+
+    if "env" in raw:
+        raw = {**raw, "env": interpolate_env_dict(raw["env"])}
+
     return StdioTransport(**raw)
 
 
