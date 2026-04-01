@@ -1,4 +1,10 @@
-"""Gateway error types and MCP error formatting helpers."""
+"""Structured error types and MCP error formatting.
+
+All gateway-specific exceptions inherit from :class:`GatewayError` so
+callers can catch them with a single ``except`` clause.  The
+:func:`format_error_result` helper builds an MCP-compatible
+``CallToolResult`` with ``isError=True`` for returning errors to clients.
+"""
 
 from __future__ import annotations
 
@@ -6,7 +12,7 @@ from mcp.types import CallToolResult, TextContent
 
 
 class GatewayError(Exception):
-    """Base for all gateway-specific errors."""
+    """Base class for all gateway errors."""
 
     status_code: int = 500
 
@@ -17,10 +23,12 @@ class GatewayError(Exception):
 
 
 class ToolCallError(GatewayError):
-    """Something went wrong proxying a call to a downstream server."""
+    """Error during a proxied tool call to a downstream server."""
 
     def __init__(
-        self, message: str, *,
+        self,
+        message: str,
+        *,
         server_name: str | None = None,
         tool_name: str | None = None,
     ) -> None:
@@ -30,7 +38,11 @@ class ToolCallError(GatewayError):
 
 
 def format_error_result(error: Exception) -> CallToolResult:
-    """Build an MCP CallToolResult with isError=True."""
+    """Build an MCP ``CallToolResult`` that signals an error to the client.
+
+    This is the canonical way to return errors from gateway-level tool
+    handlers without raising into the MCP SDK internals.
+    """
     return CallToolResult(
         content=[TextContent(type="text", text=str(error))],
         isError=True,

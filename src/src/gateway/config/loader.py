@@ -1,4 +1,4 @@
-"""YAML config loader for tenant and downstream server definitions."""
+"""Load and validate tenant + downstream server configuration from YAML."""
 
 from __future__ import annotations
 
@@ -9,12 +9,20 @@ import yaml
 from pydantic import BaseModel, Field
 
 
+# ── Tenant schema ────────────────────────────────────────────
+
+
 class TenantConfig(BaseModel):
+    """Configuration for a single tenant."""
+
     api_key: str
     role: str = Field(pattern=r"^(admin|editor|viewer)$")
     allowed_tools: list[str] = Field(default_factory=lambda: ["*"])
-    rate_limit: int = 60  # req/min
+    rate_limit: int = 60  # requests per minute
     downstream: list[str] = Field(default_factory=list)
+
+
+# ── Downstream server schema ────────────────────────────────
 
 
 class StdioTransport(BaseModel):
@@ -32,39 +40,46 @@ class SSETransport(BaseModel):
 DownstreamServerConfig = StdioTransport | SSETransport
 
 
+# ── Top-level gateway config ────────────────────────────────
+
+
 class GatewayConfig(BaseModel):
+    """Entire gateway configuration file."""
+
     tenants: dict[str, TenantConfig]
     downstream_servers: dict[str, DownstreamServerConfig]
 
 
-# ---------------------------------------------------------------------------
-# Parsing helpers
-# ---------------------------------------------------------------------------
+# ── Loader ───────────────────────────────────────────────────
+
 
 def _parse_downstream(raw: dict[str, Any]) -> DownstreamServerConfig:
     from gateway.utils.env import interpolate_env, interpolate_env_dict
 
     if raw.get("transport") == "sse":
+        # Interpolate the URL so it can reference env vars
         if "url" in raw:
             raw = {**raw, "url": interpolate_env(raw["url"])}
         return SSETransport(**raw)
 
-    # stdio — resolve ${VAR} refs in the env block
+    # Interpolate ${VAR} references in the env block
     if "env" in raw:
         raw = {**raw, "env": interpolate_env_dict(raw["env"])}
+
     return StdioTransport(**raw)
 
 
 def _parse_tenant(raw: dict[str, Any]) -> TenantConfig:
     from gateway.utils.env import interpolate_env
 
+    # Allow api_key to reference env vars (e.g. "${ACME_API_KEY}")
     if "api_key" in raw:
         raw = {**raw, "api_key": interpolate_env(raw["api_key"])}
     return TenantConfig(**raw)
 
 
 def load_config(path: str | Path) -> GatewayConfig:
-    """Read + validate a YAML config file."""
+    """Read a YAML config file and return a validated GatewayConfig."""
     raw = yaml.safe_load(Path(path).read_text())
     tenants = {name: _parse_tenant(t) for name, t in raw["tenants"].items()}
     downstreams = {name: _parse_downstream(d) for name, d in raw["downstream_servers"].items()}

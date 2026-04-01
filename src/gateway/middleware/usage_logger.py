@@ -1,11 +1,7 @@
-"""Layer 2b — Usage & token logging.
+"""Usage logging for tool calls.
 
-Logs every tool call with tenant, tool name, latency, and success/failure
-so you can build dashboards or billing later.
-
-Records are held in-memory with a configurable max-size ring buffer.
-A ``query()`` helper makes it easy to pull recent records by tenant/tool,
-and ``stats_for()`` returns aggregate counts.
+Tracks tenant, tool name, latency, and success/failure in an in-memory
+ring buffer. Meant to feed dashboards or billing down the road.
 """
 
 from __future__ import annotations
@@ -23,19 +19,15 @@ logger = structlog.get_logger()
 
 @dataclass
 class UsageRecord:
-    """Single tool-call record."""
-
     tenant_id: str
     tool_name: str
-    timestamp: float  # wall-clock (time.time)
+    timestamp: float          # wall-clock
     latency_ms: float
     success: bool = True
     error: str | None = None
 
 
 class UsageStats(NamedTuple):
-    """Aggregate stats for a query window."""
-
     total_calls: int
     successes: int
     failures: int
@@ -44,87 +36,75 @@ class UsageStats(NamedTuple):
 
 
 class UsageLogger:
-    """Collects usage records in a bounded in-memory ring buffer."""
+    """Bounded in-memory ring buffer of usage records."""
 
     def __init__(self, max_records: int = 50_000) -> None:
         self._records: deque[UsageRecord] = deque(maxlen=max_records)
 
-    # ── recording ─────────────────────────────────────────
-
     @asynccontextmanager
     async def track(self, tenant_id: str, tool_name: str) -> AsyncIterator[None]:
-        """Wrap a tool call; records timing and success/failure on exit."""
+        """Context manager that times a tool call and logs the outcome."""
         start = time.monotonic()
-        record = UsageRecord(
-            tenant_id=tenant_id,
-            tool_name=tool_name,
-            timestamp=time.time(),
-            latency_ms=0.0,
+        rec = UsageRecord(
+            tenant_id=tenant_id, tool_name=tool_name,
+            timestamp=time.time(), latency_ms=0.0,
         )
         try:
             yield
-            record.success = True
+            rec.success = True
         except Exception as exc:
-            record.success = False
-            record.error = str(exc)
+            rec.success = False
+            rec.error = str(exc)
             raise
         finally:
-            record.latency_ms = (time.monotonic() - start) * 1000
-            self._records.append(record)
+            rec.latency_ms = (time.monotonic() - start) * 1000
+            self._records.append(rec)
             logger.info(
                 "gateway.tool_call",
-                tenant=tenant_id,
-                tool=tool_name,
-                latency_ms=round(record.latency_ms, 2),
-                success=record.success,
+                tenant=tenant_id, tool=tool_name,
+                latency_ms=round(rec.latency_ms, 2),
+                success=rec.success,
             )
 
-    # ── querying ──────────────────────────────────────────
-
     def query(
-        self,
-        *,
+        self, *,
         tenant_id: str | None = None,
         tool_name: str | None = None,
         since: float | None = None,
         limit: int = 100,
     ) -> list[UsageRecord]:
-        """Return recent records matching the given filters (newest first)."""
-        matches: list[UsageRecord] = []
+        """Return recent records matching filters (newest first)."""
+        out: list[UsageRecord] = []
         for rec in reversed(self._records):
-            if tenant_id is not None and rec.tenant_id != tenant_id:
+            if tenant_id and rec.tenant_id != tenant_id:
                 continue
-            if tool_name is not None and rec.tool_name != tool_name:
+            if tool_name and rec.tool_name != tool_name:
                 continue
             if since is not None and rec.timestamp < since:
                 continue
-            matches.append(rec)
-            if len(matches) >= limit:
+            out.append(rec)
+            if len(out) >= limit:
                 break
-        return matches
+        return out
 
     def stats_for(
-        self,
-        *,
+        self, *,
         tenant_id: str | None = None,
         tool_name: str | None = None,
         since: float | None = None,
     ) -> UsageStats:
-        """Compute aggregate statistics over matching records."""
-        records = self.query(
-            tenant_id=tenant_id, tool_name=tool_name, since=since, limit=50_000
-        )
+        records = self.query(tenant_id=tenant_id, tool_name=tool_name,
+                             since=since, limit=50_000)
         if not records:
             return UsageStats(0, 0, 0, 0.0, 0.0)
 
         latencies = sorted(r.latency_ms for r in records)
-        successes = sum(1 for r in records if r.success)
+        ok = sum(1 for r in records if r.success)
         p99_idx = max(0, int(len(latencies) * 0.99) - 1)
-
         return UsageStats(
             total_calls=len(records),
-            successes=successes,
-            failures=len(records) - successes,
+            successes=ok,
+            failures=len(records) - ok,
             avg_latency_ms=sum(latencies) / len(latencies),
             p99_latency_ms=latencies[p99_idx],
         )

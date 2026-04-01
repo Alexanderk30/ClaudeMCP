@@ -1,24 +1,19 @@
-"""Environment variable interpolation for config values.
-
-Supports ``${VAR}`` and ``${VAR:-default}`` syntax in string values.
-This is used by the config loader to resolve env-var references in
-downstream server definitions (e.g. ``GITHUB_PERSONAL_ACCESS_TOKEN``).
-"""
+"""Env-var interpolation: supports ${VAR} and ${VAR:-default} in strings."""
 
 from __future__ import annotations
 
 import os
 import re
 
-_ENV_PATTERN = re.compile(
+_ENV_RE = re.compile(
     r"\$\{(?P<var>[A-Za-z_][A-Za-z0-9_]*)(?::-(?P<default>[^}]*))?\}"
 )
 
 
 def interpolate_env(value: str) -> str:
-    """Replace ``${VAR}`` and ``${VAR:-default}`` placeholders with env values.
+    """Replace ${VAR} / ${VAR:-default} placeholders with env values.
 
-    Raises ``KeyError`` if a variable has no default and is not set.
+    Raises KeyError if a var has no default and isn't set.
 
     >>> import os; os.environ["TEST_VAR"] = "hello"
     >>> interpolate_env("token=${TEST_VAR}")
@@ -26,22 +21,18 @@ def interpolate_env(value: str) -> str:
     >>> interpolate_env("port=${UNSET:-8080}")
     'port=8080'
     """
-
-    def _replace(match: re.Match[str]) -> str:
-        var = match.group("var")
-        default = match.group("default")
-        env_val = os.environ.get(var)
-        if env_val is not None:
-            return env_val
+    def _sub(m: re.Match[str]) -> str:
+        var = m.group("var")
+        default = m.group("default")
+        val = os.environ.get(var)
+        if val is not None:
+            return val
         if default is not None:
             return default
-        raise KeyError(
-            f"Environment variable '{var}' is not set and no default provided"
-        )
+        raise KeyError(f"Env var '{var}' is not set and has no default")
 
-    return _ENV_PATTERN.sub(_replace, value)
+    return _ENV_RE.sub(_sub, value)
 
 
 def interpolate_env_dict(mapping: dict[str, str]) -> dict[str, str]:
-    """Interpolate all values in a string→string dict."""
     return {k: interpolate_env(v) for k, v in mapping.items()}
